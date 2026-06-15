@@ -9,6 +9,11 @@ on:
     - cron: "30 4 * * *"    # 13:30 JST
     - cron: "0 12 * * *"    # 21:00 JST
   workflow_dispatch:        # 手動テスト用
+    inputs:
+      dry_run:
+        description: "true なら生成のみで投稿しない(検証用)"
+        type: boolean
+        default: false
 
 concurrency:
   group: auto-post          # 多重起動による二重投稿を防止
@@ -43,7 +48,7 @@ jobs:
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
           X_USER_ID: ${{ secrets.X_USER_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          X_LIVE_POST: "true"
+          X_LIVE_POST: ${{ github.event.inputs.dry_run == 'true' && 'false' || 'true' }}
         run: python scripts/pipeline.py
 
       - name: Persist post history (dedup state)
