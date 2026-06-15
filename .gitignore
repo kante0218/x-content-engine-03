@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+venv/
+__pycache__/
+*.pyc
+logs/*.log
+drafts/failed/
+# X ログイン済みセッション(Cookie/トークン)はクラウドに絶対上げない
+.browser_profile/
+.DS_Store
