@@ -24,6 +24,9 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from config import fetch_post_config, theme_map  # noqa: E402
 
 PENDING = ROOT / "drafts" / "pending"
 POSTED = ROOT / "drafts" / "posted"
@@ -120,16 +123,26 @@ THEMES = {
 }
 
 
+def _active_themes() -> dict:
+    """ダッシュボード設定の有効テーマがあればそれを、無ければ組み込み THEMES を使う。"""
+    cfg_themes = theme_map(fetch_post_config())
+    if cfg_themes:
+        sys.stderr.write(f"[config] テーマをダッシュボード設定から取得: {len(cfg_themes)}件\n")
+        return cfg_themes
+    return THEMES
+
+
 def pick_theme(forced: str | None = None) -> tuple[str, str, str]:
+    themes = _active_themes()
     if forced:
-        if forced not in THEMES:
-            raise ValueError(f"theme は {list(THEMES)} のいずれか")
-        t = THEMES[forced]
+        if forced not in themes:
+            raise ValueError(f"theme は {list(themes)} のいずれか")
+        t = themes[forced]
         return forced, t["label"], random.choice(t["seeds"])
-    keys = list(THEMES.keys())
-    weights = [THEMES[k]["ratio"] for k in keys]
+    keys = list(themes.keys())
+    weights = [themes[k]["ratio"] for k in keys]
     k = random.choices(keys, weights=weights, k=1)[0]
-    return k, THEMES[k]["label"], random.choice(THEMES[k]["seeds"])
+    return k, themes[k]["label"], random.choice(themes[k]["seeds"])
 
 
 def recent_seeds_to_avoid(n: int = 12) -> list[str]:

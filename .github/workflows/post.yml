@@ -38,6 +38,8 @@ jobs:
       - name: Generate draft
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
         run: python scripts/generate_draft.py
 
       - name: Polish & post pending
