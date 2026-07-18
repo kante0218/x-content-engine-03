@@ -219,28 +219,39 @@ def polish(draft: str, length: str | None = None, comment_cta: bool = False) -> 
     label, length_instruction = _pick_length_instruction(length)
     emoji_instruction = _emoji_instruction()
     cta_block = (_comment_cta_instruction() + "\n") if comment_cta else ""
-    user_msg = (
-        "以下のドラフトをXに投稿する自分のツイートに書き直してください。\n\n"
-        f"{length_instruction}\n\n"
-        f"{emoji_instruction}\n"
-        f"{cta_block}"
-        "---\n"
-        f"{draft}\n"
-        "---"
-    )
-
     client = Anthropic(api_key=api_key)
-    res = client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-    text = "".join(block.text for block in res.content if block.type == "text").strip()
-    if len(text) > 280:
-        raise RuntimeError(f"推敲結果が{len(text)}文字>280。原文を短くしてリトライしてください")
-    sys.stderr.write(f"[length_mode={label} chars={len(text)}]\n")
-    return text
+
+    # 280字超過は自動リトライ(最大3回)。2回目以降は前回の超過を明示して短縮させる。
+    last_text = ""
+    for attempt in range(1, 4):
+        over_note = ""
+        if attempt > 1:
+            over_note = (
+                f"\n# 重要(前回オーバー)\n- 前回は{len(last_text)}文字で上限280を超えました。"
+                "今回は**必ず270文字以内**に収めてください。内容を削ってでも短くする。\n"
+            )
+        user_msg = (
+            "以下のドラフトをXに投稿する自分のツイートに書き直してください。\n\n"
+            f"{length_instruction}\n\n"
+            f"{emoji_instruction}\n"
+            f"{cta_block}"
+            f"{over_note}"
+            "---\n"
+            f"{draft}\n"
+            "---"
+        )
+        res = client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = "".join(block.text for block in res.content if block.type == "text").strip()
+        if text and len(text) <= 280:
+            sys.stderr.write(f"[length_mode={label} chars={len(text)} attempt={attempt}]\n")
+            return text
+        last_text = text
+    raise RuntimeError(f"推敲結果が{len(last_text)}文字>280。3回試しても収まりませんでした")
 
 
 REPLY_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォードパートナーズ株式会社 執行役員の本人。
