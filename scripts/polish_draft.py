@@ -198,7 +198,17 @@ def _pick_length_instruction(forced: str | None = None) -> tuple[str, str]:
     return choice[1], choice[2]
 
 
-def polish(draft: str, length: str | None = None) -> str:
+def _comment_cta_instruction() -> str:
+    """コメ欄(自己リプ)に続きを置く前提で、本文末尾に自然な誘導を入れさせる。"""
+    return (
+        "# 今回はコメ欄(リプ欄)に『続き』を置く投稿です\n"
+        "- 本文は1行目のフックと核心で完結させ、具体的な場面・気づきの深掘りは本文に全部書かず、コメ欄(自分のリプ)に続ける前提で書く\n"
+        "- 末尾に、コメ欄へ自然に誘導する短い一文を1つだけ入れる。例:「続きはコメントに書きますね」「実際にあった話はリプに続けます」。毎回同じ言い回しにしない\n"
+        "- 「↓」や「→」を1個使って視線をコメ欄に流してもよい(任意)。280文字以内は厳守\n"
+    )
+
+
+def polish(draft: str, length: str | None = None, comment_cta: bool = False) -> str:
     draft = draft.strip()
     if not draft:
         raise ValueError("空のドラフトは推敲できません")
@@ -208,10 +218,12 @@ def polish(draft: str, length: str | None = None) -> str:
 
     label, length_instruction = _pick_length_instruction(length)
     emoji_instruction = _emoji_instruction()
+    cta_block = (_comment_cta_instruction() + "\n") if comment_cta else ""
     user_msg = (
         "以下のドラフトをXに投稿する自分のツイートに書き直してください。\n\n"
         f"{length_instruction}\n\n"
         f"{emoji_instruction}\n"
+        f"{cta_block}"
         "---\n"
         f"{draft}\n"
         "---"
@@ -229,6 +241,62 @@ def polish(draft: str, length: str | None = None) -> str:
         raise RuntimeError(f"推敲結果が{len(text)}文字>280。原文を短くしてリトライしてください")
     sys.stderr.write(f"[length_mode={label} chars={len(text)}]\n")
     return text
+
+
+REPLY_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォードパートナーズ株式会社 執行役員の本人。
+今、自分が投稿したXツイートに**自分でぶら下げるリプライ(コメ欄の続き)**を1つ書く。
+本ツイートはフックと核心で引っ張ってあり、このリプに"続き"が来るのを読者は期待している。
+
+# このリプの役割
+- 本ツイートで省いた続きを渡す。面談で実際にあった場面、気づきの背景、具体的な体験のどれか
+- 内容に合うときは番号(1. 2. 3.)や矢印(→)で「状況→気づき」「前はこう→今はこう」を1〜2箇所構造化してよい(毎回はやらない)
+- 最後に、読み手が自分の経験をコメントしたくなる自然な余白を1つ残してよい(「どう思いますか?」の薄い定型ではなく具体的に)。無い回があってもよい
+
+# 口調(本ツイートと完全に揃える)
+- 一人称は必ず「私」。文末は「です・ます」基調
+- 倒置法は禁止。自然な語順で書く
+- 強い断定・煽り・他者批判・他社批判は使わない
+- 絵文字は0〜1個(本ツイートで使った絵文字は繰り返さない)。派手系💎🔥💯🤑💸/白ハート♡/赤ハート♥❤️は禁止
+- ハッシュタグ・URL・エンゲージ乞い(RTして/いいねして)は禁止
+- 踏み込み禁止トピック(代表交代・株主・ミカタグループ・還元率の原資・結婚・家族・震災・特定批判)には触れない
+
+# 出力
+- リプ本文だけを返す。「リプ:」等の前置き・引用符・説明は一切なし
+- **275文字以内厳守**(リプもツイートなので280字制限がある)
+- 本ツイートと同じ話題の続きとして自然に繋がること。本ツイートの文をそのまま繰り返さない"""
+
+
+def generate_reply(main_text: str, draft: str) -> str:
+    """投稿済み本ツイートにぶら下げる『コメ欄の続き』リプ本文を生成する。"""
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY が未設定(https://aistudio.google.com/apikey で無料発行)")
+    reply_cap = 275
+    client = Anthropic(api_key=api_key)
+
+    base_user = (
+        "以下が今投稿した本ツイートです。これにぶら下げる『続き』リプを1つ書いてください。\n\n"
+        f"# 本ツイート\n---\n{main_text}\n---\n\n"
+        f"# 元になった素ドラフト(続きの出どころ。ここから場面・気づき・具体を拾ってよい)\n---\n{draft[:1500]}\n---\n\n"
+        f"- {reply_cap}文字以内。"
+    )
+
+    last = ""
+    for attempt in range(1, 4):
+        over = ""
+        if attempt > 1:
+            over = f"\n# 重要: 前回は{len(last)}文字で{reply_cap}を超えました。今回は必ず{reply_cap}文字以内に。\n"
+        res = client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system=REPLY_SYSTEM,
+            messages=[{"role": "user", "content": base_user + over}],
+        )
+        text = "".join(b.text for b in res.content if b.type == "text").strip()
+        last = text
+        if text and len(text) <= reply_cap:
+            return text
+    raise RuntimeError(f"リプ生成が{reply_cap}文字以内に収まりませんでした({len(last)}文字)")
 
 
 def main() -> int:
