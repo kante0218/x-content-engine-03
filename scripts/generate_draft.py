@@ -19,7 +19,7 @@ import random
 import sys
 from pathlib import Path
 
-from llm_gemini import Anthropic
+from anthropic import Anthropic
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -206,7 +206,7 @@ GENERATE_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォ�
 
 
 def generate(theme_key: str, theme_label: str, seed: str, avoid: list[str]) -> str:
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY が未設定(https://aistudio.google.com/apikey で無料発行)")
 
