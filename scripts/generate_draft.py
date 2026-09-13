@@ -19,7 +19,6 @@ import random
 import sys
 from pathlib import Path
 
-from anthropic import Anthropic
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,6 +26,7 @@ load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from config import fetch_post_config, theme_map  # noqa: E402
+from polish_draft import Anthropic, LLM_API_KEY, LENGTH_CAPS, _pick_length_instruction  # noqa: E402
 
 PENDING = ROOT / "drafts" / "pending"
 POSTED = ROOT / "drafts" / "posted"
@@ -172,11 +172,15 @@ GENERATE_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォ�
 
 仕上げの推敲は別工程で行うので、ここでは:
 - 完成形でなくてよい。気持ちの温度感だけ正しく載せる
-- **長さは毎回ほぼ最大長**(**260字前後を狙う、絶対280を超えない**)。エピソード+具体描写+気づき+本音 のように複数ブロックで密度を出す
+- 指定された長さを守る。ひとことは1行で終え、教訓や仕事への接続を足さない。下限を埋めるために説明しない
+- 本人プロフィールと入力で確認できる事実だけを使う。テーマの種は話題案であり、未確認の体験・会話・数字・訪問を本人の事実として書かない
+- 男性エンジニアにも気軽に反応してもらえる食べ物や趣味の話を交ぜる。恋愛感情や特別扱いを装わない
+- 1投稿1メッセージ。説明を足し続けず、読み手が引用・返信したくなる「本人の立場」を1つ残す
 - 一人称は必ず「私」。「えみり」と自称しない(三人称で自分を呼ばない)
 - 絵文字は0〜2個程度、🌸に偏らせず色々な女性的な絵文字を散らす(最終的な絵文字は仕上げ工程で調整するので、ここでは温度感だけ)。派手系🔥💯💎🤑💸・白/赤ハート♡♥はNG
 - **倒置法は禁止**: 述語のあとに副詞句を独立配置する語順(例: 「〜にしたい。本気で。」)はNG。自然な日本語の語順で書く
 - 構成テンプレ(共感→気づき→締め)を毎回踏まない、毎回違う角度から入る
+- 「〜が大事」「〜な気がする」だけで終わる一般論は禁止。何を見てそう思ったのかまで書く
 - 「みんなも頑張ろう」「素敵な一日を」みたいな定型締めは禁止
 - AIが書いたと分かる流暢すぎる説明・大上段は禁止
 
@@ -205,11 +209,15 @@ GENERATE_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォ�
 - 仕上げで整える前提なので完成度より素直さ優先"""
 
 
-def generate(theme_key: str, theme_label: str, seed: str, avoid: list[str]) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+def generate(theme_key: str, theme_label: str, seed: str, avoid: list[str], length: str | None = None) -> str:
+    api_key = LLM_API_KEY
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY が未設定(https://aistudio.google.com/apikey で無料発行)")
+        raise RuntimeError("GEMINI_API_KEY または ANTHROPIC_API_KEY が未設定")
 
+    length, length_instruction = _pick_length_instruction(length)
+    cap = LENGTH_CAPS[length]
+    if length in ("ひとこと", "短文"):
+        theme_key, theme_label, seed = "F", "日常・好きなもの", "プロフィールにある家系ラーメン、自炊、農作業、読書、ランニングのうち1つへの好み。今日の出来事は作らない"
     avoid_block = ""
     if avoid:
         avoid_block = (
@@ -218,21 +226,24 @@ def generate(theme_key: str, theme_label: str, seed: str, avoid: list[str]) -> s
         )
 
     user_msg = (
-        f"# 今回のテーマ\nカテゴリ: {theme_key} / {theme_label}\nネタの種: {seed}\n"
+        f"# 今回のテーマ\nカテゴリ: {theme_key} / {theme_label}\nネタの種: {seed}\n{length_instruction}\n"
         + avoid_block
         + "\n\n上記の種を起点に、えみり本人が今ふと書きたくなって書く独り言ツイートのドラフトを1つだけ。"
         "完成形でなくてOK、気持ちの温度感を素直に載せて。"
     )
 
     client = Anthropic(api_key=api_key)
-    res = client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        system=GENERATE_SYSTEM,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-    text = "".join(block.text for block in res.content if block.type == "text").strip()
-    return text
+    for _ in range(3):
+        res = client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system=GENERATE_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = "".join(block.text for block in res.content if block.type == "text").strip()
+        if text and len(text) <= cap:
+            return text
+    raise RuntimeError(f"生成結果が空、または{cap}文字超過({len(text)}文字)")
 
 
 def append_log(payload: dict) -> None:
@@ -260,10 +271,14 @@ def main() -> int:
         append_log({"event": "skipped", "pending_count": len(existing)})
         return 0
 
-    k, label, seed = pick_theme(theme_forced)
+    length, _ = _pick_length_instruction()
+    if theme_forced is None and length in ("ひとこと", "短文"):
+        k, label, seed = "F", THEMES["F"]["label"], random.choice(THEMES["F"]["seeds"])
+    else:
+        k, label, seed = pick_theme(theme_forced)
     print(f"[theme] {k} / {label}\n[seed] {seed}\n")
     avoid = recent_seeds_to_avoid()
-    draft = generate(k, label, seed, avoid)
+    draft = generate(k, label, seed, avoid, length=length)
     print(f"[draft]\n{draft}\n")
 
     fname = f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_{k}_auto.md"

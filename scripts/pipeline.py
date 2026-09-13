@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from polish_draft import generate_reply, polish  # noqa: E402
+from polish_draft import LENGTH_CAPS, _pick_length_instruction, generate_reply, polish  # noqa: E402
 from post_tweet import post  # noqa: E402
 
 
@@ -110,7 +110,10 @@ def main() -> int:
         print(f"[quote_rt] quote_tweet_id={quote_id}")
 
     # コメ欄に『続き』を自己リプで置くスレッド投稿にするか(引用RTとは併用しない)
-    thread = (quote_id is None) and (random.random() < _reply_thread_rate())
+    if length is None and draft_path.name.endswith("_auto.md"):
+        length = next(label for label, cap in LENGTH_CAPS.items() if len(body.strip()) <= cap) if len(body.strip()) <= 260 else None
+    length = length or ("ひとこと" if len(body.strip()) <= 35 else "短文" if len(body.strip()) <= 90 else _pick_length_instruction()[0])
+    thread = (length == "長文") and (len(body.strip()) > 170) and (quote_id is None) and (random.random() < _reply_thread_rate())
     reply_text: str | None = None
 
     try:

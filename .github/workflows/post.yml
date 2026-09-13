@@ -62,7 +62,7 @@ jobs:
           python scripts/pipeline.py 2>&1 | tee -a /tmp/pipeline.log
 
       - name: Persist post history (dedup state)
-        if: always()
+        if: always() && github.event.inputs.dry_run != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -74,7 +74,7 @@ jobs:
             echo "no state change to commit"
           fi
       - name: Alert on failure (GitHub Issue)
-        if: failure()
+        if: failure() && github.event.inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

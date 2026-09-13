@@ -13,11 +13,16 @@ import random
 import sys
 from pathlib import Path
 
-from anthropic import Anthropic
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
+if os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY_2") or os.getenv("GOOGLE_API_KEY"):
+    from llm_gemini import Anthropic
+    LLM_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY_2") or os.getenv("GOOGLE_API_KEY")
+else:
+    from anthropic import Anthropic
+    LLM_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # 推敲モデル。X_CLAUDE_MODEL 環境変数で切替可(未設定時 Sonnet 5)。
 # 例: claude-opus-4-7 / claude-sonnet-5 / claude-haiku-4-5-20251001
@@ -27,7 +32,9 @@ SYSTEM_PROMPT = """あなたは「えみり(@oxp_emiri)」=オックスフォー
 原文ドラフトを、自分の言葉に書き直してください。
 
 # 大前提
-- AIが書いたとバレないこと
+- 本人の実際のプロフィールと入力で確認できる事実に忠実に書く。AI利用を否定する文や、実在しない体験・会話・訪問・数字を作らない。テーマの種は事実の記録ではない
+- 男性エンジニアにも気軽に反応してもらえる、食べ物・趣味・仕事の小さな感想を交ぜる。恋愛感情や特別扱いを装って関心を引かない
+- 短い投稿は一言で完結してよい。毎回の教訓、問いかけ、肩書き、採用への接続は不要
 - 構成テンプレ(共感→気づき→アドバイス→締め)を毎回踏まない。今回はどこから入ってどこで終わるか、毎回違う角度で
 - 「みんなも意識してみて?!」「頑張ろう!」「素敵な一日を」みたいな定型の締めは禁止
 - 真面目5:軽め5。連続して同じテンションにしない
@@ -122,6 +129,10 @@ F. 日常・癒し(農作業・自炊・ランニング・廃墟系YouTube・カ
 
 # 投稿の絶対ルール
 - 280文字以内厳守
+- 1投稿1メッセージ。文章量より、冒頭の具体性と本人の立場を優先する
+- 説明が必要な投稿のみ、入力にある具体的な材料を使う。短い感想に数字や面談の場面を無理に足さない
+- 「学びが大事」「成長が大事」「AIを使うべき」のような誰でも言える結論だけで終えない
+- 読者に質問するのは4投稿に1回以下。薄い質問で締めず、言い切って終える回を増やす
 - URL は原文にあるものだけ残す。勝手に追加しない
 - ハッシュタグは原則使わない(意図的にバズ狙う回のみ最大1個)
 
@@ -169,7 +180,7 @@ def _emoji_instruction() -> str:
     elif r < 0.85:
         count_rule = "今回は**絵文字を2個**にする"
     else:
-        count_rule = "今回は**絵文字を3個**にする"
+        count_rule = "今回は**絵文字を2個**にする"
     return (
         "# 今回の絵文字パレット(乱数生成・このツイート限定)\n"
         f"- 候補: {palette}\n"
@@ -179,12 +190,15 @@ def _emoji_instruction() -> str:
     )
 
 
+# 2026-09-13: 旧ダッシュボードの3段階比率より、今回合意した緩急を優先。
 LENGTH_MODES = [
-    (1, "短文", "今回は **短文** で。3〜4行、130〜180文字程度。"),
-    (1, "中文", "今回は **中くらい** で。5〜6行、180〜220文字程度。"),
-    (20, "長文", "今回は **めっちゃ長文** で。**240〜275文字、絶対280を超えない**。エピソード+具体描写+気づき+本音の4ブロックで密度を出す。改行を効かせて読みやすく、ただし詰め込む。"),
+    (30, "ひとこと", "今回は10〜35文字のひとこと。1行、好きなものや小さな感想1つだけ。教訓・仕事への接続・質問・続きは不要。"),
+    (35, "短文", "今回は36〜90文字の短文。1〜3行、気軽な話題1つで終える。無理に学びや採用の話へ繋げない。"),
+    (25, "中文", "今回は91〜170文字。考えや気づき1つを、必要な説明だけで伝える。"),
+    (10, "長文", "今回は171〜260文字。入力で確認できる具体的な材料が十分ある時だけ詳しく。言い換えで埋めない。"),
 ]
 LENGTH_LABELS = {m[1]: m for m in LENGTH_MODES}
+LENGTH_CAPS = {"ひとこと": 35, "短文": 90, "中文": 170, "長文": 260}
 
 
 def _pick_length_instruction(forced: str | None = None) -> tuple[str, str]:
@@ -212,23 +226,26 @@ def polish(draft: str, length: str | None = None, comment_cta: bool = False) -> 
     draft = draft.strip()
     if not draft:
         raise ValueError("空のドラフトは推敲できません")
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = LLM_API_KEY
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY が未設定(https://aistudio.google.com/apikey で無料発行)")
+        raise RuntimeError("GEMINI_API_KEY または ANTHROPIC_API_KEY が未設定")
 
+    if length is None and len(draft) <= 90:
+        length = "ひとこと" if len(draft) <= 35 else "短文"
     label, length_instruction = _pick_length_instruction(length)
+    cap = LENGTH_CAPS[label]
+    comment_cta = comment_cta and label == "長文"
     emoji_instruction = _emoji_instruction()
     cta_block = (_comment_cta_instruction() + "\n") if comment_cta else ""
     client = Anthropic(api_key=api_key)
 
-    # 280字超過は自動リトライ(最大3回)。2回目以降は前回の超過を明示して短縮させる。
+    # 選択した長さの上限を超えたら同じモードで再試行。短い結果は引き延ばさない。
     last_text = ""
     for attempt in range(1, 4):
         over_note = ""
         if attempt > 1:
             over_note = (
-                f"\n# 重要(前回オーバー)\n- 前回は{len(last_text)}文字で上限280を超えました。"
-                "今回は**必ず270文字以内**に収めてください。内容を削ってでも短くする。\n"
+                f"\n# 再試行: 前回は{len(last_text)}文字。空文は禁止、今回は{cap}文字以内で完結してください。\n"
             )
         user_msg = (
             "以下のドラフトをXに投稿する自分のツイートに書き直してください。\n\n"
@@ -247,11 +264,11 @@ def polish(draft: str, length: str | None = None, comment_cta: bool = False) -> 
             messages=[{"role": "user", "content": user_msg}],
         )
         text = "".join(block.text for block in res.content if block.type == "text").strip()
-        if text and len(text) <= 280:
+        if text and len(text) <= cap:
             sys.stderr.write(f"[length_mode={label} chars={len(text)} attempt={attempt}]\n")
             return text
         last_text = text
-    raise RuntimeError(f"推敲結果が{len(last_text)}文字>280。3回試しても収まりませんでした")
+    raise RuntimeError(f"推敲結果が空、または{cap}文字超過({len(last_text)}文字)。3回試しても収まりませんでした")
 
 
 REPLY_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォードパートナーズ株式会社 執行役員の本人。
@@ -259,6 +276,7 @@ REPLY_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォー�
 本ツイートはフックと核心で引っ張ってあり、このリプに"続き"が来るのを読者は期待している。
 
 # このリプの役割
+- 元ドラフトにない体験・会話・数字は作らない。本人の恋愛感情や特別扱いを装わない
 - 本ツイートで省いた続きを渡す。面談で実際にあった場面、気づきの背景、具体的な体験のどれか
 - 内容に合うときは番号(1. 2. 3.)や矢印(→)で「状況→気づき」「前はこう→今はこう」を1〜2箇所構造化してよい(毎回はやらない)
 - 最後に、読み手が自分の経験をコメントしたくなる自然な余白を1つ残してよい(「どう思いますか?」の薄い定型ではなく具体的に)。無い回があってもよい
@@ -279,9 +297,9 @@ REPLY_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォー�
 
 def generate_reply(main_text: str, draft: str) -> str:
     """投稿済み本ツイートにぶら下げる『コメ欄の続き』リプ本文を生成する。"""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = LLM_API_KEY
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY が未設定(https://aistudio.google.com/apikey で無料発行)")
+        raise RuntimeError("GEMINI_API_KEY または ANTHROPIC_API_KEY が未設定")
     reply_cap = 275
     client = Anthropic(api_key=api_key)
 
