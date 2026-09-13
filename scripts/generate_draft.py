@@ -26,7 +26,7 @@ load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from config import fetch_post_config, theme_map  # noqa: E402
-from polish_draft import Anthropic, LLM_API_KEY, LENGTH_CAPS, _pick_length_instruction  # noqa: E402
+from polish_draft import Anthropic, LLM_API_KEY, LENGTH_CAPS, SHORT_EMOJI_INSTRUCTION, _pick_length_instruction  # noqa: E402
 
 PENDING = ROOT / "drafts" / "pending"
 POSTED = ROOT / "drafts" / "posted"
@@ -171,6 +171,7 @@ GENERATE_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォ�
 これから自分のXに投稿する単体ツイートの**素のドラフト**を1つ書く。
 
 仕上げの推敲は別工程で行うので、ここでは:
+- 「ラーメンが好き」から麺の硬さ・味の濃さ・油の量・店名などの好みを推測しない。趣味から道具・頻度・腕前・細かな好みも補わない。入力に明記された範囲の好みだけを書く
 - 完成形でなくてよい。気持ちの温度感だけ正しく載せる
 - 指定された長さを守る。ひとことは1行で終え、教訓や仕事への接続を足さない。下限を埋めるために説明しない
 - 本人プロフィールと入力で確認できる事実だけを使う。テーマの種は話題案であり、未確認の体験・会話・数字・訪問を本人の事実として書かない
@@ -217,7 +218,8 @@ def generate(theme_key: str, theme_label: str, seed: str, avoid: list[str], leng
     length, length_instruction = _pick_length_instruction(length)
     cap = LENGTH_CAPS[length]
     if length in ("ひとこと", "短文"):
-        theme_key, theme_label, seed = "F", "日常・好きなもの", "プロフィールにある家系ラーメン、自炊、農作業、読書、ランニングのうち1つへの好み。今日の出来事は作らない"
+        theme_key, theme_label, seed = "F", "日常・好きなもの", "プロフィールに明記された家系ラーメン、自炊、農作業、読書、ランニングの名前を1つ選び、その既知の好みだけを短く述べる。注文方法など細かな好み・実体験・今日の出来事を追加しない"
+    emoji_instruction = SHORT_EMOJI_INSTRUCTION if length in ("ひとこと", "短文") else ""
     avoid_block = ""
     if avoid:
         avoid_block = (
@@ -226,7 +228,7 @@ def generate(theme_key: str, theme_label: str, seed: str, avoid: list[str], leng
         )
 
     user_msg = (
-        f"# 今回のテーマ\nカテゴリ: {theme_key} / {theme_label}\nネタの種: {seed}\n{length_instruction}\n"
+        f"# 今回のテーマ\nカテゴリ: {theme_key} / {theme_label}\nネタの種: {seed}\n{length_instruction}\n{emoji_instruction}\n"
         + avoid_block
         + "\n\n上記の種を起点に、えみり本人が今ふと書きたくなって書く独り言ツイートのドラフトを1つだけ。"
         "完成形でなくてOK、気持ちの温度感を素直に載せて。"
