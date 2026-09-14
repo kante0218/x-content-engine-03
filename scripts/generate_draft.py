@@ -26,7 +26,7 @@ load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from config import fetch_post_config, theme_map  # noqa: E402
-from polish_draft import Anthropic, LLM_API_KEY, LENGTH_CAPS, SHORT_EMOJI_INSTRUCTION, _pick_length_instruction  # noqa: E402
+from polish_draft import Anthropic, LLM_API_KEY, LLM_PROVIDER, LENGTH_CAPS, SHORT_EMOJI_INSTRUCTION, _pick_length_instruction  # noqa: E402
 
 PENDING = ROOT / "drafts" / "pending"
 POSTED = ROOT / "drafts" / "posted"
@@ -212,7 +212,7 @@ GENERATE_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォ�
 
 def generate(theme_key: str, theme_label: str, seed: str, avoid: list[str], length: str | None = None) -> str:
     api_key = LLM_API_KEY
-    if not api_key:
+    if not api_key and LLM_PROVIDER != "claude_subscription":
         raise RuntimeError("GEMINI_API_KEY または ANTHROPIC_API_KEY が未設定")
 
     length, length_instruction = _pick_length_instruction(length)

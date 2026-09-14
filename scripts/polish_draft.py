@@ -17,12 +17,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
-if os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY_2") or os.getenv("GOOGLE_API_KEY"):
-    from llm_gemini import Anthropic
-    LLM_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY_2") or os.getenv("GOOGLE_API_KEY")
-else:
-    from anthropic import Anthropic
-    LLM_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+from post_llm import Anthropic, LLM_API_KEY, LLM_PROVIDER
 
 # 推敲モデル。X_CLAUDE_MODEL 環境変数で切替可(未設定時 Sonnet 5)。
 # 例: claude-opus-4-7 / claude-sonnet-5 / claude-haiku-4-5-20251001
@@ -229,7 +224,7 @@ def polish(draft: str, length: str | None = None, comment_cta: bool = False) -> 
     if not draft:
         raise ValueError("空のドラフトは推敲できません")
     api_key = LLM_API_KEY
-    if not api_key:
+    if not api_key and LLM_PROVIDER != "claude_subscription":
         raise RuntimeError("GEMINI_API_KEY または ANTHROPIC_API_KEY が未設定")
 
     if length is None and len(draft) <= 90:
@@ -300,7 +295,7 @@ REPLY_SYSTEM = """あなたは「えみり(@oxp_emiri)」=オックスフォー�
 def generate_reply(main_text: str, draft: str) -> str:
     """投稿済み本ツイートにぶら下げる『コメ欄の続き』リプ本文を生成する。"""
     api_key = LLM_API_KEY
-    if not api_key:
+    if not api_key and LLM_PROVIDER != "claude_subscription":
         raise RuntimeError("GEMINI_API_KEY または ANTHROPIC_API_KEY が未設定")
     reply_cap = 275
     client = Anthropic(api_key=api_key)
